@@ -5,14 +5,19 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.bluetooth.le.BluetoothLeScanner
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
+import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.Intent
+import android.os.ParcelUuid
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.util.Log
 import android.view.View
+import android.view.Menu
+import android.view.MenuItem
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
@@ -21,6 +26,7 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.preference.PreferenceManager
 import androidx.core.graphics.Insets
 import androidx.core.view.OnApplyWindowInsetsListener
 import androidx.core.view.ViewCompat
@@ -46,6 +52,24 @@ class ScanActivity : AppCompatActivity() {
                 val name = result.device.name ?: "No Name"
                 bleArrayAdapter.add("$name\n${result.device.address}")
                 bleArrayAdapter.notifyDataSetChanged()
+                Log.d("Scan", "Found: name='" + name + "' addr=" + result.device.address + " rssi=" + result.rssi)
+                val prefs = androidx.preference.PreferenceManager.getDefaultSharedPreferences(this@ScanActivity)
+                val auto = prefs.getBoolean("auto_connect", true)
+                if (auto) {
+                    Log.d("Scan", "Autoconnect=ON -> stopping scan and opening ControlActivity for " + result.device.address)
+                    handler.removeCallbacksAndMessages(null)
+                    scanButton.setText(R.string.scan_scanButtonText)
+                    bluetoothLeScanner.stopScan(this)
+                    bluetoothLeScanner.flushPendingScanResults(this)
+                    isScanning = false
+                    Log.d("Scan", "Scan stopped, launching ControlActivity")
+                    val intent = Intent(this@ScanActivity, ControlActivity::class.java)
+                    intent.putExtra(EXTRAS_BLE_ADDRESS, result.device.address)
+                    startActivity(intent)
+                    finish()
+                } else {
+                    Log.d("Scan", "Autoconnect=OFF -> waiting for user selection")
+                }
             }
         }
     }
@@ -78,6 +102,19 @@ class ScanActivity : AppCompatActivity() {
         scanList.adapter = bleArrayAdapter
     }
 
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.main_menu, menu)
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (item.itemId == R.id.action_settings) {
+            startActivity(Intent(this, SettingsActivity::class.java))
+            return true
+        }
+        return super.onOptionsItemSelected(item)
+    }
+
     private fun checkAndStart() {
         if (checkPerms()) {
             scanLeDevice(!isScanning)
@@ -99,8 +136,18 @@ class ScanActivity : AppCompatActivity() {
             bleArrayAdapter.clear()
             bleArrayAdapter.notifyDataSetChanged()
             scanButton.setText(R.string.scan_scanButtonText2)
-            bluetoothLeScanner.startScan(leScanCallback)
+            val filters = mutableListOf<ScanFilter>()
+            filters.add(
+                ScanFilter.Builder()
+                    .setServiceUuid(ParcelUuid(com.iwakura.an9hack.ControlActivity.UART_SERVICE))
+                    .build()
+            )
+            val settings = ScanSettings.Builder()
+                .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
+                .build()
+            bluetoothLeScanner.startScan(filters, settings, leScanCallback)
             Log.d("Scan", "Scanning...")
+            Log.d("Scan", "Filter UUID: ${com.iwakura.an9hack.ControlActivity.UART_SERVICE}")
             isScanning = true
             return
         }
